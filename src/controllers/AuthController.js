@@ -28,7 +28,7 @@ const signUp = async (req, res) => {
 
   if (current_password.length < 6) {
     return res.status(400).json({
-      message: "Password must be at least 6 characters",
+      message: "Password must be at least 6 characteres",
     });
   }
 
@@ -41,7 +41,7 @@ const signUp = async (req, res) => {
     //En caso de que encuentre el correo electronico en la BD, el usuario ya existe
     if (existinguser) {
       return res.status(400).json({
-        message: "Email already exists",
+        message: "Email allready exists",
       });
     }
 
@@ -56,7 +56,7 @@ const signUp = async (req, res) => {
     });
 
     res.status(201).json({
-      message: "User created successfully",
+      message: "User created successfull",
       data: user,
     });
   } catch (error) {
@@ -81,7 +81,7 @@ const signIn = async (req, res) => {
       message: "all required fields: fullname, email and password",
     });
   }
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular para asegurar que sea en formato para correo
   if (!emailRegex.test(email)) {
     //.test es un método de regex
     return res.status(400).json({
