@@ -1,12 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const {signIn, signUp, verifyCode, resendVerificationCode, signUpSMS, resendVerificationCodeSMS} = require('../controllers/AuthController');
+const {signIn, signUp, verifyCode, resendVerificationCode, signUpSMS, resendVerificationCodeSMS, signInEmail, signInSMS} = require('../controllers/AuthController');
 
 router.post('/signup', signUp);
 
 router.post('/signupsms', signUpSMS)
 
-router.post('/signin', signIn);
+router.post('/signinEmail', signInEmail);
+
+router.post('/signinSMS', signInSMS);
+
 
 router.post('/verify', verifyCode);
 

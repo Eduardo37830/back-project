@@ -181,30 +181,23 @@ const resendVerificationCode = async (req, res) => {
     }
 
     // Generar nuevo código y actualizar fecha de expiración
-    const newCode = generateVerificationCode();
+    const newCode = generateCode();
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15);
 
     await prisma.users.update({
       where: { id: user.id },
       data: {
-        verificationCode: newCode,
+        verificationCode: String(newCode),
         verificationCodeExpires: expirationTime,
       },
     });
 
     // Enviar nuevo código por correo
-    const emailSent = await sendVerificationEmail(email, newCode, user.fullname);
+    const emailSent = await sendVerificationEmail(email, newCode, user.fullname);  
 
-    const smsSent = await sendVerificationSMS(telephone, code)
-  
-
-    if (emailSent && smsSent) {
-      return res.status(200).json({ message: "Verification code sent successfully. Please check your email and phone." });
-    } else if (emailSent) {
+    if (emailSent) {
       return res.status(200).json({ message: "Verification code sent successfully. Please check your email." });
-    } else if (smsSent) {
-      return res.status(200).json({ message: "Verification code sent successfully. Please check your phone." });
     } else {
       return res.status(500).json({ message: "Failed to send verification. Please try again later." });
     }
@@ -250,19 +243,19 @@ const resendVerificationCodeSMS = async (req, res) => {
     }
 
     // Generar nuevo código y actualizar fecha de expiración
-    const newCode = generateVerificationCode();
+    const newCode = generateCode();
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15);
 
     await prisma.users.update({
       where: { id: user.id },
       data: {
-        verificationCode: newCode,
+        verificationCode: String(newCode),
         verificationCodeExpires: expirationTime,
       },
     });
 
-    const smsSent = await sendVerificationSMS(telephone, code)
+    const smsSent = await sendVerificationSMS(telephone, newCode)
   
 
     if (smsSent) {
@@ -454,16 +447,16 @@ const signUpSMS = async (req, res) =>{
 };
 
 
-const signIn = async (req, res) => {
-  let { email, current_password } = req.body;
+const signInSMS = async (req, res) => {
+  let { email, current_password, telephone } = req.body;
   if (email) {
     email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
   }
   console.log(current_password);
 
-  if (!email || !current_password) {
+  if (!email || !current_password||!telephone) {
     return res.status(400).json({
-      message: "all required fields: email and password",
+      message: "all required fields: email, password and telephone",
     });
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular para asegurar que sea en formato para correo
@@ -473,7 +466,9 @@ const signIn = async (req, res) => {
       message: "Invalid email format",
     });
   }
-
+  const verificationCode = generateCode();
+  const expirationTime = new Date();
+  expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
   try {
     const findUser = await prisma.users.findUnique({
       where: {
@@ -490,13 +485,22 @@ const signIn = async (req, res) => {
       current_password,
       findUser.current_password
     );
+    
 
     if (!validatePassword) {
       return res.status(400).json({
         message: "Invalid credentials",
       });
     }
+    const smsSent = await sendVerificationSMS(
+      telephone,
+      verificationCode
+    )
 
+    if (!smsSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
+    }
     const token = jwt.sign(
       {
         return: {
@@ -515,6 +519,89 @@ const signIn = async (req, res) => {
     res.status(200).json({
       message: "User logged in successfull",
       token,
+      verificationCode
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Login failed",
+      error,
+    });
+  }
+};
+
+const signInEmail = async (req, res) => {
+  let { email, current_password, telephone } = req.body;
+  if (email) {
+    email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
+  }
+  console.log(current_password);
+
+  if (!email || !current_password||!telephone) {
+    return res.status(400).json({
+      message: "all required fields: email, password and telephone",
+    });
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular para asegurar que sea en formato para correo
+  if (!emailRegex.test(email)) {
+    //.test es un método de regex
+    return res.status(400).json({
+      message: "Invalid email format",
+    });
+  }
+  const verificationCode = generateCode();
+  const expirationTime = new Date();
+  expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
+  try {
+    const findUser = await prisma.users.findUnique({
+      where: {
+        email,
+      },
+    });
+    if (!findUser) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const validatePassword = await bcrypt.compare(
+      current_password,
+      findUser.current_password
+    );
+    
+
+    if (!validatePassword) {
+      return res.status(400).json({
+        message: "Invalid credentials",
+      });
+    }
+    const emailSent = await sendVerificationEmail(
+      email,
+      verificationCode
+    )
+
+    if (!emailSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
+    }
+    const token = jwt.sign(
+      {
+        return: {
+          id: findUser.id,
+          email: findUser.email,
+        },
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "2h",
+      }
+    );
+
+    console.log(token);
+
+    res.status(200).json({
+      message: "User logged in successfull",
+      token,
+      verificationCode
     });
   } catch (error) {
     res.status(500).json({
@@ -527,7 +614,8 @@ const signIn = async (req, res) => {
 module.exports = {
   signUp,
   signUpSMS,
-  signIn,
+  signInSMS,
+  signInEmail,
   sendVerificationEmail,
   sendVerificationSMS,
   verifyCode,
