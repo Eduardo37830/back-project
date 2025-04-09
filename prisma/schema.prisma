@@ -17,6 +17,7 @@ model Users {
   id                      String    @id @default(auto()) @map("_id") @db.ObjectId
   fullname                String
   email                   String    @unique
+  telephone               String    @unique
   current_password        String
   role                    Role      @default(EDITOR)
   status                  Status    @default(PENDING)

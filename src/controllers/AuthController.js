@@ -4,6 +4,11 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
+const twilio = require('twilio');
+
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const client = twilio(accountSid, authToken);
 
 // Configuración del transporte de correo electrónico
 const transporter = nodemailer.createTransport({
@@ -48,6 +53,21 @@ const sendVerificationEmail = async (email, code, fullname) => {
     return true;
   } catch (error) {
     console.error("Error sending email:", error);
+    return false;
+  }
+};
+
+const sendVerificationSMS = async (telephone, code) => {
+  try {
+    const message = await client.messages.create({
+      body: `Tu código de verificación es: ${code}`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: telephone // El número de teléfono del destinatario (debe empezar con '+')
+    });
+    console.log("Send SMS:", message.sid);
+    return true;
+  } catch (error) {
+    console.error("Error sending SMS:", error);
     return false;
   }
 };
@@ -130,7 +150,13 @@ const verifyCode = async (req, res) => {
 
 const resendVerificationCode = async (req, res) => {
   const { email } = req.body;
+  const {telephone} = req.body;
 
+  if (!telephone){
+    return res.status(400).json({
+      message: "telephone is required",
+    });
+  }
   if (!email) {
     return res.status(400).json({
       message: "Email is required",
@@ -170,16 +196,18 @@ const resendVerificationCode = async (req, res) => {
     // Enviar nuevo código por correo
     const emailSent = await sendVerificationEmail(email, newCode, user.fullname);
 
-    if (!emailSent) {
-      return res.status(500).json({
-        message: "Failed to send verification email. Please try again later.",
-      });
+    const smsSent = await sendVerificationSMS(telephone, code)
+  
+
+    if (emailSent && smsSent) {
+      return res.status(200).json({ message: "Verification code sent successfully. Please check your email and phone." });
+    } else if (emailSent) {
+      return res.status(200).json({ message: "Verification code sent successfully. Please check your email." });
+    } else if (smsSent) {
+      return res.status(200).json({ message: "Verification code sent successfully. Please check your phone." });
+    } else {
+      return res.status(500).json({ message: "Failed to send verification. Please try again later." });
     }
-
-    res.status(200).json({
-      message: "Verification code sent successfully. Please check your email.",
-    });
-
   } catch (error) {
     console.log("Error resending code:", error);
     res.status(500).json({
@@ -190,14 +218,14 @@ const resendVerificationCode = async (req, res) => {
 };
 
 const signUp = async (req, res) => {
-  let { fullname, email, current_password } = req.body;
+  let { fullname, email, current_password, telephone } = req.body;
   console.log(req.body);
   if (email) {
     email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
   }
   console.log(email);
   //validate null/empty field
-  if (!fullname || !email || !current_password) {
+  if (!fullname || !email || !current_password|| !telephone) {
     return res.status(400).json({
       message: "all required fields: fullname, email and password",
     });
@@ -256,20 +284,25 @@ const signUp = async (req, res) => {
       fullname
     );
 
-    if (!emailSent) {
-      // Si falla el envío del correo, eliminamos el usuario creado
-      await prisma.users.delete({
-        where: { id: user.id },
-      });
+    const smsSent = await sendVerificationSMS(
+      telephone,
+      verificationCode
+    )
 
-      return res.status(500).json({
-        message: "Failed to send verification email. Please try again later.",
-      });
+    if (!emailSent && !smsSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification via email and phone. Please try again later." });
+    } else if (!emailSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification email. Please try again later." });
+    } else if (!smsSent && telephone) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
     }
 
     //Nota: no se envia codigo ni datos sensibles en la respuesta
     res.status(201).json({
-      message: "User created successfully. Please check your email for verification code",
+      message: "User created successfully. Please check your email" + (smsSent ? " and phone" : "") + " for verification code.",
       userId: user.id,
       email: user.email
     });
@@ -357,6 +390,7 @@ module.exports = {
   signUp,
   signIn,
   sendVerificationEmail,
+  sendVerificationSMS,
   verifyCode,
   resendVerificationCode,
 };
