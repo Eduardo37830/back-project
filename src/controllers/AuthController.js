@@ -315,11 +315,11 @@ const signUp = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(current_password, 10); //Empleamos bycrypt para encriptar la contraseña
 
-    // Generar un código de verificación
+/*    // Generar un código de verificación
     const verificationCode = generateCode();
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
-
+*/
     //Guardar usuario con estado pendiente y codigo de verificación
     const user = await prisma.users.create({
       data: {
@@ -333,7 +333,7 @@ const signUp = async (req, res) => {
       },
     });
 
-    // Enviar correo con código de verificación
+/*    // Enviar correo con código de verificación
     const emailSent = await sendVerificationEmail(
       email,
       verificationCode,
@@ -344,7 +344,7 @@ const signUp = async (req, res) => {
       await prisma.users.delete({ where: { id: user.id } });
       return res.status(500).json({ message: "Failed to send verification email. Please try again later." });
     } 
-
+*/
     //Nota: no se envia codigo ni datos sensibles en la respuesta
     res.status(201).json({
       message: "User created successfully. Please check your email for verification code.",
@@ -404,11 +404,11 @@ const signUpSMS = async (req, res) =>{
 
     const hashedPassword = await bcrypt.hash(current_password, 10); //Empleamos bycrypt para encriptar la contraseña
 
-    // Generar un código de verificación
+/*    // Generar un código de verificación
     const verificationCode = generateCode();
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
-
+*/
     //Guardar usuario con estado pendiente y codigo de verificación
     const user = await prisma.users.create({
       data: {
@@ -422,7 +422,7 @@ const signUpSMS = async (req, res) =>{
       },
     });
 
-    const smsSent = await sendVerificationSMS(
+/*    const smsSent = await sendVerificationSMS(
       telephone,
       verificationCode
     )
@@ -431,7 +431,7 @@ const signUpSMS = async (req, res) =>{
       await prisma.users.delete({ where: { id: user.id } });
       return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
     }
-
+*/
     //Nota: no se envia codigo ni datos sensibles en la respuesta
     res.status(201).json({
       message: "User created successfully. Please check your phone for verification code.",
