@@ -303,7 +303,7 @@ const signUp = async (req, res) => {
   try {
     const existinguser = await prisma.users.findUnique({
       where: {
-        email,
+        email, telephone
       },
     });
     //En caso de que encuentre el correo electronico en la BD, el usuario ya existe
@@ -325,6 +325,7 @@ const signUp = async (req, res) => {
       data: {
         fullname,
         email,
+        telephone,
         current_password: hashedPassword,
         status: "PENDING",
         verificationCode: String(verificationCode),
@@ -391,7 +392,7 @@ const signUpSMS = async (req, res) =>{
   try {
     const existinguser = await prisma.users.findUnique({
       where: {
-        email,
+        email, telephone
       },
     });
     //En caso de que encuentre el correo electronico en la BD, el usuario ya existe
@@ -413,6 +414,7 @@ const signUpSMS = async (req, res) =>{
       data: {
         fullname,
         email,
+        telephone,
         current_password: hashedPassword,
         status: "PENDING",
         verificationCode: String(verificationCode),
@@ -448,15 +450,15 @@ const signUpSMS = async (req, res) =>{
 
 
 const signInSMS = async (req, res) => {
-  let { email, current_password, telephone } = req.body;
+  let { email, current_password } = req.body;
   if (email) {
     email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
   }
   console.log(current_password);
 
-  if (!email || !current_password||!telephone) {
+  if (!email || !current_password) {
     return res.status(400).json({
-      message: "all required fields: email, password and telephone",
+      message: "all required fields: email, password",
     });
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular para asegurar que sea en formato para correo
@@ -493,7 +495,7 @@ const signInSMS = async (req, res) => {
       });
     }
     const smsSent = await sendVerificationSMS(
-      telephone,
+      findUser.telephone,
       verificationCode
     )
 
@@ -530,13 +532,13 @@ const signInSMS = async (req, res) => {
 };
 
 const signInEmail = async (req, res) => {
-  let { email, current_password, telephone } = req.body;
+  let { email, current_password } = req.body;
   if (email) {
     email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
   }
   console.log(current_password);
 
-  if (!email || !current_password||!telephone) {
+  if (!email || !current_password) {
     return res.status(400).json({
       message: "all required fields: email, password and telephone",
     });
