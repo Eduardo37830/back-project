@@ -217,6 +217,68 @@ const resendVerificationCode = async (req, res) => {
   }
 };
 
+const resendVerificationCodeSMS = async (req, res) => {
+  const { email } = req.body;
+  const {telephone} = req.body;
+
+  if (!telephone){
+    return res.status(400).json({
+      message: "telephone is required",
+    });
+  }
+  if (!email) {
+    return res.status(400).json({
+      message: "Email is required",
+    });
+  }
+
+  try {
+    const user = await prisma.users.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    if (user.status === "ACTIVE") {
+      return res.status(400).json({
+        message: "User is already verified",
+      });
+    }
+
+    // Generar nuevo código y actualizar fecha de expiración
+    const newCode = generateVerificationCode();
+    const expirationTime = new Date();
+    expirationTime.setMinutes(expirationTime.getMinutes() + 15);
+
+    await prisma.users.update({
+      where: { id: user.id },
+      data: {
+        verificationCode: newCode,
+        verificationCodeExpires: expirationTime,
+      },
+    });
+
+    const smsSent = await sendVerificationSMS(telephone, code)
+  
+
+    if (smsSent) {
+      return res.status(200).json({ message: "Verification code sent successfully. Please check your phone." });
+    } else {
+      return res.status(500).json({ message: "Failed to send verification. Please try again later." });
+    }
+  } catch (error) {
+    console.log("Error resending code:", error);
+    res.status(500).json({
+      message: "Failed to resend verification code",
+      error: error.message,
+    });
+  }
+};
+
 const signUp = async (req, res) => {
   let { fullname, email, current_password, telephone } = req.body;
   console.log(req.body);
@@ -284,25 +346,14 @@ const signUp = async (req, res) => {
       fullname
     );
 
-    const smsSent = await sendVerificationSMS(
-      telephone,
-      verificationCode
-    )
-
-    if (!emailSent && !smsSent) {
-      await prisma.users.delete({ where: { id: user.id } });
-      return res.status(500).json({ message: "Failed to send verification via email and phone. Please try again later." });
-    } else if (!emailSent) {
+    if (!emailSent) {
       await prisma.users.delete({ where: { id: user.id } });
       return res.status(500).json({ message: "Failed to send verification email. Please try again later." });
-    } else if (!smsSent && telephone) {
-      await prisma.users.delete({ where: { id: user.id } });
-      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
-    }
+    } 
 
     //Nota: no se envia codigo ni datos sensibles en la respuesta
     res.status(201).json({
-      message: "User created successfully. Please check your email" + (smsSent ? " and phone" : "") + " for verification code.",
+      message: "User created successfully. Please check your email for verification code.",
       userId: user.id,
       email: user.email
     });
@@ -315,6 +366,93 @@ const signUp = async (req, res) => {
     });
   }
 };
+
+const signUpSMS = async (req, res) =>{
+  let { fullname, email, current_password, telephone } = req.body;
+  console.log(req.body);
+  if (email) {
+    email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
+  }
+  console.log(email);
+  //validate null/empty field
+  if (!fullname || !email || !current_password|| !telephone) {
+    return res.status(400).json({
+      message: "all required fields: fullname, email and password",
+    });
+  }
+  //valida si el correo electronico tiene @
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular
+  if (!emailRegex.test(email)) {
+    //.test es un método de regex
+    return res.status(400).json({
+      message: "Invalid email format",
+    });
+  }
+
+  if (current_password.length < 6) {
+    return res.status(400).json({
+      message: "Password must be at least 6 characteres",
+    });
+  }
+
+  try {
+    const existinguser = await prisma.users.findUnique({
+      where: {
+        email,
+      },
+    });
+    //En caso de que encuentre el correo electronico en la BD, el usuario ya existe
+    if (existinguser) {
+      return res.status(400).json({
+        message: "Email allready exists",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(current_password, 10); //Empleamos bycrypt para encriptar la contraseña
+
+    // Generar un código de verificación
+    const verificationCode = generateCode();
+    const expirationTime = new Date();
+    expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
+
+    //Guardar usuario con estado pendiente y codigo de verificación
+    const user = await prisma.users.create({
+      data: {
+        fullname,
+        email,
+        current_password: hashedPassword,
+        status: "PENDING",
+        verificationCode: String(verificationCode),
+        verificationCodeExpires: expirationTime,
+      },
+    });
+
+    const smsSent = await sendVerificationSMS(
+      telephone,
+      verificationCode
+    )
+
+    if (!smsSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
+    }
+
+    //Nota: no se envia codigo ni datos sensibles en la respuesta
+    res.status(201).json({
+      message: "User created successfully. Please check your phone for verification code.",
+      userId: user.id,
+      email: user.email
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).json({
+      message: "Error creating user",
+      error,
+    });
+  }
+};
+
 
 const signIn = async (req, res) => {
   let { email, current_password } = req.body;
@@ -388,9 +526,11 @@ const signIn = async (req, res) => {
 
 module.exports = {
   signUp,
+  signUpSMS,
   signIn,
   sendVerificationEmail,
   sendVerificationSMS,
   verifyCode,
   resendVerificationCode,
+  resendVerificationCodeSMS
 };
