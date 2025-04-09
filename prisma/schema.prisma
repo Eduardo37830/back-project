@@ -36,3 +36,22 @@ enum Status {
   INACTIVE
   PENDING
 }
+
+model Departments {
+  id        String   @id @map("_id")
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  towns Towns[]
+}
+
+model Towns {
+  id        String   @id @map("_id")
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  department    Departments @relation(fields: [department_id], references: [id])
+  department_id String
+}
