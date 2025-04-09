@@ -4,6 +4,11 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
+const twilio = require('twilio');
+
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const client = twilio(accountSid, authToken);
 
 // Configuración del transporte de correo electrónico
 const transporter = nodemailer.createTransport({
@@ -48,6 +53,21 @@ const sendVerificationEmail = async (email, code, fullname) => {
     return true;
   } catch (error) {
     console.error("Error sending email:", error);
+    return false;
+  }
+};
+
+const sendVerificationSMS = async (telephone, code) => {
+  try {
+    const message = await client.messages.create({
+      body: `Tu código de verificación es: ${code}`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: telephone // El número de teléfono del destinatario (debe empezar con '+')
+    });
+    console.log("Send SMS:", message.sid);
+    return true;
+  } catch (error) {
+    console.error("Error sending SMS:", error);
     return false;
   }
 };
@@ -130,7 +150,13 @@ const verifyCode = async (req, res) => {
 
 const resendVerificationCode = async (req, res) => {
   const { email } = req.body;
+  const {telephone} = req.body;
 
+  if (!telephone){
+    return res.status(400).json({
+      message: "telephone is required",
+    });
+  }
   if (!email) {
     return res.status(400).json({
       message: "Email is required",
@@ -155,31 +181,88 @@ const resendVerificationCode = async (req, res) => {
     }
 
     // Generar nuevo código y actualizar fecha de expiración
-    const newCode = generateVerificationCode();
+    const newCode = generateCode();
     const expirationTime = new Date();
     expirationTime.setMinutes(expirationTime.getMinutes() + 15);
 
     await prisma.users.update({
       where: { id: user.id },
       data: {
-        verificationCode: newCode,
+        verificationCode: String(newCode),
         verificationCodeExpires: expirationTime,
       },
     });
 
     // Enviar nuevo código por correo
-    const emailSent = await sendVerificationEmail(email, newCode, user.fullname);
+    const emailSent = await sendVerificationEmail(email, newCode, user.fullname);  
 
-    if (!emailSent) {
-      return res.status(500).json({
-        message: "Failed to send verification email. Please try again later.",
+    if (emailSent) {
+      return res.status(200).json({ message: "Verification code sent successfully. Please check your email." });
+    } else {
+      return res.status(500).json({ message: "Failed to send verification. Please try again later." });
+    }
+  } catch (error) {
+    console.log("Error resending code:", error);
+    res.status(500).json({
+      message: "Failed to resend verification code",
+      error: error.message,
+    });
+  }
+};
+
+const resendVerificationCodeSMS = async (req, res) => {
+  const { email } = req.body;
+  const {telephone} = req.body;
+
+  if (!telephone){
+    return res.status(400).json({
+      message: "telephone is required",
+    });
+  }
+  if (!email) {
+    return res.status(400).json({
+      message: "Email is required",
+    });
+  }
+
+  try {
+    const user = await prisma.users.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
       });
     }
 
-    res.status(200).json({
-      message: "Verification code sent successfully. Please check your email.",
+    if (user.status === "ACTIVE") {
+      return res.status(400).json({
+        message: "User is already verified",
+      });
+    }
+
+    // Generar nuevo código y actualizar fecha de expiración
+    const newCode = generateCode();
+    const expirationTime = new Date();
+    expirationTime.setMinutes(expirationTime.getMinutes() + 15);
+
+    await prisma.users.update({
+      where: { id: user.id },
+      data: {
+        verificationCode: String(newCode),
+        verificationCodeExpires: expirationTime,
+      },
     });
 
+    const smsSent = await sendVerificationSMS(telephone, newCode)
+  
+
+    if (smsSent) {
+      return res.status(200).json({ message: "Verification code sent successfully. Please check your phone." });
+    } else {
+      return res.status(500).json({ message: "Failed to send verification. Please try again later." });
+    }
   } catch (error) {
     console.log("Error resending code:", error);
     res.status(500).json({
@@ -190,14 +273,14 @@ const resendVerificationCode = async (req, res) => {
 };
 
 const signUp = async (req, res) => {
-  let { fullname, email, current_password } = req.body;
+  let { fullname, email, current_password, telephone } = req.body;
   console.log(req.body);
   if (email) {
     email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
   }
   console.log(email);
   //validate null/empty field
-  if (!fullname || !email || !current_password) {
+  if (!fullname || !email || !current_password|| !telephone) {
     return res.status(400).json({
       message: "all required fields: fullname, email and password",
     });
@@ -220,7 +303,7 @@ const signUp = async (req, res) => {
   try {
     const existinguser = await prisma.users.findUnique({
       where: {
-        email,
+        email, telephone
       },
     });
     //En caso de que encuentre el correo electronico en la BD, el usuario ya existe
@@ -242,6 +325,7 @@ const signUp = async (req, res) => {
       data: {
         fullname,
         email,
+        telephone,
         current_password: hashedPassword,
         status: "PENDING",
         verificationCode: String(verificationCode),
@@ -257,19 +341,13 @@ const signUp = async (req, res) => {
     );
 
     if (!emailSent) {
-      // Si falla el envío del correo, eliminamos el usuario creado
-      await prisma.users.delete({
-        where: { id: user.id },
-      });
-
-      return res.status(500).json({
-        message: "Failed to send verification email. Please try again later.",
-      });
-    }
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification email. Please try again later." });
+    } 
 
     //Nota: no se envia codigo ni datos sensibles en la respuesta
     res.status(201).json({
-      message: "User created successfully. Please check your email for verification code",
+      message: "User created successfully. Please check your email for verification code.",
       userId: user.id,
       email: user.email
     });
@@ -283,7 +361,95 @@ const signUp = async (req, res) => {
   }
 };
 
-const signIn = async (req, res) => {
+const signUpSMS = async (req, res) =>{
+  let { fullname, email, current_password, telephone } = req.body;
+  console.log(req.body);
+  if (email) {
+    email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
+  }
+  console.log(email);
+  //validate null/empty field
+  if (!fullname || !email || !current_password|| !telephone) {
+    return res.status(400).json({
+      message: "all required fields: fullname, email and password",
+    });
+  }
+  //valida si el correo electronico tiene @
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular
+  if (!emailRegex.test(email)) {
+    //.test es un método de regex
+    return res.status(400).json({
+      message: "Invalid email format",
+    });
+  }
+
+  if (current_password.length < 6) {
+    return res.status(400).json({
+      message: "Password must be at least 6 characteres",
+    });
+  }
+
+  try {
+    const existinguser = await prisma.users.findUnique({
+      where: {
+        email, telephone
+      },
+    });
+    //En caso de que encuentre el correo electronico en la BD, el usuario ya existe
+    if (existinguser) {
+      return res.status(400).json({
+        message: "Email allready exists",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(current_password, 10); //Empleamos bycrypt para encriptar la contraseña
+
+    // Generar un código de verificación
+    const verificationCode = generateCode();
+    const expirationTime = new Date();
+    expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
+
+    //Guardar usuario con estado pendiente y codigo de verificación
+    const user = await prisma.users.create({
+      data: {
+        fullname,
+        email,
+        telephone,
+        current_password: hashedPassword,
+        status: "PENDING",
+        verificationCode: String(verificationCode),
+        verificationCodeExpires: expirationTime,
+      },
+    });
+
+    const smsSent = await sendVerificationSMS(
+      telephone,
+      verificationCode
+    )
+
+    if (!smsSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
+    }
+
+    //Nota: no se envia codigo ni datos sensibles en la respuesta
+    res.status(201).json({
+      message: "User created successfully. Please check your phone for verification code.",
+      userId: user.id,
+      email: user.email
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).json({
+      message: "Error creating user",
+      error,
+    });
+  }
+};
+
+
+const signInSMS = async (req, res) => {
   let { email, current_password } = req.body;
   if (email) {
     email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
@@ -292,7 +458,7 @@ const signIn = async (req, res) => {
 
   if (!email || !current_password) {
     return res.status(400).json({
-      message: "all required fields: email and password",
+      message: "all required fields: email, password",
     });
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular para asegurar que sea en formato para correo
@@ -302,7 +468,9 @@ const signIn = async (req, res) => {
       message: "Invalid email format",
     });
   }
-
+  const verificationCode = generateCode();
+  const expirationTime = new Date();
+  expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
   try {
     const findUser = await prisma.users.findUnique({
       where: {
@@ -319,13 +487,22 @@ const signIn = async (req, res) => {
       current_password,
       findUser.current_password
     );
+    
 
     if (!validatePassword) {
       return res.status(400).json({
         message: "Invalid credentials",
       });
     }
+    const smsSent = await sendVerificationSMS(
+      findUser.telephone,
+      verificationCode
+    )
 
+    if (!smsSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
+    }
     const token = jwt.sign(
       {
         return: {
@@ -344,6 +521,89 @@ const signIn = async (req, res) => {
     res.status(200).json({
       message: "User logged in successfull",
       token,
+      verificationCode
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Login failed",
+      error,
+    });
+  }
+};
+
+const signInEmail = async (req, res) => {
+  let { email, current_password } = req.body;
+  if (email) {
+    email = email.toLowerCase().trim(); //Trim quita los espacios en blanco
+  }
+  console.log(current_password);
+
+  if (!email || !current_password) {
+    return res.status(400).json({
+      message: "all required fields: email, password and telephone",
+    });
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; //Regex es una expresión regular para asegurar que sea en formato para correo
+  if (!emailRegex.test(email)) {
+    //.test es un método de regex
+    return res.status(400).json({
+      message: "Invalid email format",
+    });
+  }
+  const verificationCode = generateCode();
+  const expirationTime = new Date();
+  expirationTime.setMinutes(expirationTime.getMinutes() + 15); // Expira en 15 minutos
+  try {
+    const findUser = await prisma.users.findUnique({
+      where: {
+        email,
+      },
+    });
+    if (!findUser) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const validatePassword = await bcrypt.compare(
+      current_password,
+      findUser.current_password
+    );
+    
+
+    if (!validatePassword) {
+      return res.status(400).json({
+        message: "Invalid credentials",
+      });
+    }
+    const emailSent = await sendVerificationEmail(
+      email,
+      verificationCode
+    )
+
+    if (!emailSent) {
+      await prisma.users.delete({ where: { id: user.id } });
+      return res.status(500).json({ message: "Failed to send verification phone. Please try again later." });
+    }
+    const token = jwt.sign(
+      {
+        return: {
+          id: findUser.id,
+          email: findUser.email,
+        },
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "2h",
+      }
+    );
+
+    console.log(token);
+
+    res.status(200).json({
+      message: "User logged in successfull",
+      token,
+      verificationCode
     });
   } catch (error) {
     res.status(500).json({
@@ -355,8 +615,12 @@ const signIn = async (req, res) => {
 
 module.exports = {
   signUp,
-  signIn,
+  signUpSMS,
+  signInSMS,
+  signInEmail,
   sendVerificationEmail,
+  sendVerificationSMS,
   verifyCode,
   resendVerificationCode,
+  resendVerificationCodeSMS
 };
